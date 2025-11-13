@@ -50,22 +50,41 @@ def load_task_data(
         Task data dictionary or None if not found
     """
     data_dir = Path(dataset_path) / split
-    metadata_file = data_dir / "metadata.jsonl"
+    
+    # Updated to use parquet instead of jsonl
+    metadata_file = data_dir / "metadata.parquet"
 
     if not metadata_file.exists():
         logger.error(f"Metadata file not found: {metadata_file}")
+        # Try alternative path structure
+        alt_metadata_file = Path(dataset_path) / split / "metadata.parquet"
+        if alt_metadata_file.exists():
+            metadata_file = alt_metadata_file
+            logger.info(f"Using alternative path: {metadata_file}")
+        else:
+            logger.error(f"Alternative path also not found: {alt_metadata_file}")
+            return None
+
+    try:
+        # Import pandas or pyarrow to read parquet
+        try:
+            import pandas as pd
+            df = pd.read_parquet(metadata_file)
+            tasks = df.to_dict('records')
+        except ImportError:
+            # Fallback to pyarrow
+            import pyarrow.parquet as pq
+            table = pq.read_table(metadata_file)
+            tasks = table.to_pylist()
+        
+        logger.info(f"Loaded {len(tasks)} tasks from {metadata_file}")
+        
+    except Exception as e:
+        logger.error(f"Error reading parquet file: {e}")
         return None
 
-    with open(metadata_file, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    tasks = []
-    for line in lines:
-        data = json.loads(line)
-        # Skip placeholder task
-        if data["task_id"] == "0-0-0-0-0":
-            continue
-        tasks.append(data)
+    # Filter out placeholder task if exists
+    tasks = [t for t in tasks if t.get("task_id") != "0-0-0-0-0"]
 
     # Find requested task
     if task_id:
@@ -101,7 +120,7 @@ level = {task['Level']}
 question = """{task['Question']}"""
 ground_truth = """{task['Final answer']}"""
 file_name = "{task.get('file_name', '')}"
-annotator_tools = {task.get('Annotator Metadata', {}).get('Tools', [])}
+annotator_tools = """{task.get('Annotator Metadata', {}).get('Tools', '')}"""
 
 print("=" * 80)
 print("TASK DETAILS")
@@ -111,7 +130,7 @@ print(f"Difficulty Level: {{level}}")
 print(f"Has File Attachment: {{bool(file_name)}}")
 if file_name:
     print(f"  File: {{file_name}}")
-print(f"Annotator Tools Used: {{', '.join(annotator_tools) if annotator_tools else 'None'}}")
+print(f"Annotator Tools Used: {{annotator_tools if annotator_tools else 'None'}}")
 print()
 print("QUESTION:")
 print("-" * 80)
